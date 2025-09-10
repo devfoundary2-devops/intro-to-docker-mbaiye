@@ -1,0 +1,393 @@
+name: Autograding Tests
+on:
+  - push
+  - workflow_dispatch
+  - repository_dispatch
+permissions:
+  checks: write
+  actions: read
+  contents: read
+jobs:
+  run-autograding-tests:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-classroom[bot]'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Test 0: Detect Language Implementation
+    - name: Language Detection Test
+      id: language-detection-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Language Detection Test
+        command: |
+          if [ -f "app.py" ] || [ -f "main.py" ] || [ -f "requirements.txt" ]; then
+            echo "DETECTED: Python implementation"
+            echo "python" > /tmp/detected_language
+          elif [ -f "main.go" ] || [ -f "go.mod" ] || [ -f "go.sum" ]; then
+            echo "DETECTED: Go implementation"
+            echo "go" > /tmp/detected_language
+          else
+            echo "FAIL: No valid Python or Go implementation detected"
+            echo "unknown" > /tmp/detected_language
+            exit 1
+          fi
+        expected-output: "DETECTED:"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 1: Check if docker-compose.yml includes all required services
+    - name: Docker Compose Configuration Test
+      id: compose-config-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Docker Compose Configuration Test
+        command: |
+          if [ ! -f "docker-compose.yml" ]; then
+            echo "FAIL: docker-compose.yml not found"
+            exit 1
+          fi
+          
+          # Check for required services
+          if ! grep -q "redis" docker-compose.yml; then
+            echo "FAIL: Redis service not found in docker-compose.yml"
+            exit 1
+          fi
+          
+          if ! grep -q "postgres" docker-compose.yml; then
+            echo "FAIL: PostgreSQL service not found in docker-compose.yml"
+            exit 1
+          fi
+          
+          if ! grep -q "app" docker-compose.yml || ! grep -q "build" docker-compose.yml; then
+            echo "FAIL: App service not properly configured with build context"
+            exit 1
+          fi
+          
+          echo "PASS: All required services found in docker-compose.yml"
+        expected-output: "PASS: All required services found in docker-compose.yml"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 2: Language-specific Dependencies Test
+    - name: Dependencies Test
+      id: dependencies-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Dependencies Test
+        command: |
+          # Detect language first
+          if [ -f "requirements.txt" ]; then
+            echo "Testing Python dependencies..."
+            
+            if ! grep -q "redis" requirements.txt; then
+              echo "FAIL: Redis dependency not found in requirements.txt"
+              exit 1
+            fi
+            
+            if ! grep -q "psycopg2\|asyncpg" requirements.txt; then
+              echo "FAIL: PostgreSQL dependency not found in requirements.txt"
+              exit 1
+            fi
+            
+            if ! grep -q "fastapi\|flask\|django" requirements.txt; then
+              echo "FAIL: Web framework dependency not found in requirements.txt"
+              exit 1
+            fi
+            
+            echo "PASS: Required Python dependencies found"
+            
+          elif [ -f "go.mod" ]; then
+            echo "Testing Go dependencies..."
+            
+            if ! grep -q "redis\|go-redis" go.mod; then
+              echo "FAIL: Redis dependency not found in go.mod"
+              exit 1
+            fi
+            
+            if ! grep -q "postgres\|pq\|pgx" go.mod; then
+              echo "FAIL: PostgreSQL dependency not found in go.mod"
+              exit 1
+            fi
+            
+            echo "PASS: Required Go dependencies found"
+            
+          else
+            echo "FAIL: No dependency file found (requirements.txt or go.mod)"
+            exit 1
+          fi
+        expected-output: "PASS: Required"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 3: Application Code Structure Test
+    - name: Application Structure Test
+      id: app-structure-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Application Structure Test
+        command: |
+          # Check for Python implementation
+          if [ -f "app.py" ] || [ -f "main.py" ]; then
+            APP_FILE="app.py"
+            [ -f "main.py" ] && APP_FILE="main.py"
+            
+            echo "Testing Python application structure..."
+            
+            # Check for Redis connection
+            if ! grep -q "redis\|Redis" "$APP_FILE"; then
+              echo "FAIL: Redis not found in Python application"
+              exit 1
+            fi
+            
+            # Check for cache endpoints
+            if ! grep -q "cache.*get\|get.*cache" "$APP_FILE"; then
+              echo "FAIL: Cache GET endpoint not found in Python app"
+              exit 1
+            fi
+            
+            if ! grep -q "cache.*set\|set.*cache\|post.*cache" "$APP_FILE"; then
+              echo "FAIL: Cache SET endpoint not found in Python app"
+              exit 1
+            fi
+            
+            echo "PASS: Python application structure is correct"
+            
+          # Check for Go implementation
+          elif [ -f "main.go" ]; then
+            echo "Testing Go application structure..."
+            
+            # Check for Redis connection
+            if ! grep -q "redis\|Redis" main.go; then
+              echo "FAIL: Redis not found in Go application"
+              exit 1
+            fi
+            
+            # Check for HTTP handlers/routes
+            if ! grep -q "GET\|get\|HandleFunc\|router" main.go; then
+              echo "FAIL: HTTP GET handlers not found in Go app"
+              exit 1
+            fi
+            
+            if ! grep -q "POST\|post\|PUT\|put" main.go; then
+              echo "FAIL: HTTP POST/PUT handlers not found in Go app"
+              exit 1
+            fi
+            
+            # Check for cache-related endpoints
+            if ! grep -q "cache" main.go; then
+              echo "FAIL: Cache-related functionality not found in Go app"
+              exit 1
+            fi
+            
+            echo "PASS: Go application structure is correct"
+            
+          else
+            echo "FAIL: No main application file found (app.py, main.py, or main.go)"
+            exit 1
+          fi
+        expected-output: "PASS:"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 4: Error Handling Test
+    - name: Error Handling Test
+      id: error-handling-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Error Handling Test
+        command: |
+          # Check for Python implementation
+          if [ -f "app.py" ] || [ -f "main.py" ]; then
+            APP_FILE="app.py"
+            [ -f "main.py" ] && APP_FILE="main.py"
+            
+            echo "Testing Python error handling..."
+            
+            if ! grep -q "try\|except\|HTTPException\|raise" "$APP_FILE"; then
+              echo "FAIL: No error handling found in Python app"
+              exit 1
+            fi
+            
+            echo "PASS: Python error handling found"
+            
+          # Check for Go implementation
+          elif [ -f "main.go" ]; then
+            echo "Testing Go error handling..."
+            
+            if ! grep -q "err\|error\|Error" main.go; then
+              echo "FAIL: No error handling found in Go app"
+              exit 1
+            fi
+            
+            # Check for proper Go error checking patterns
+            if ! grep -q "if.*err.*!=.*nil" main.go; then
+              echo "FAIL: No proper Go error checking pattern found"
+              exit 1
+            fi
+            
+            echo "PASS: Go error handling found"
+            
+          else
+            echo "FAIL: No application file found for error handling check"
+            exit 1
+          fi
+        expected-output: "PASS:"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 5: PostgreSQL Integration Test
+    - name: PostgreSQL Integration Test
+      id: postgres-integration-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: PostgreSQL Integration Test
+        command: |
+          # Check for Python implementation
+          if [ -f "app.py" ] || [ -f "main.py" ]; then
+            APP_FILE="app.py"
+            [ -f "main.py" ] && APP_FILE="main.py"
+            
+            echo "Testing Python PostgreSQL integration..."
+            
+            if ! grep -q "psycopg2\|asyncpg\|sqlalchemy\|databases" "$APP_FILE"; then
+              echo "FAIL: PostgreSQL integration not found in Python app"
+              exit 1
+            fi
+            
+            echo "PASS: Python PostgreSQL integration found"
+            
+          # Check for Go implementation
+          elif [ -f "main.go" ]; then
+            echo "Testing Go PostgreSQL integration..."
+            
+            if ! grep -q "postgres\|pq\|pgx\|sql.Open" main.go; then
+              echo "FAIL: PostgreSQL integration not found in Go app"
+              exit 1
+            fi
+            
+            echo "PASS: Go PostgreSQL integration found"
+            
+          else
+            echo "FAIL: No application file found for PostgreSQL integration check"
+            exit 1
+          fi
+        expected-output: "PASS:"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 6: Dockerfile Validation Test
+    - name: Dockerfile Validation Test
+      id: dockerfile-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Dockerfile Validation Test
+        command: |
+          if [ ! -f "Dockerfile" ]; then
+            echo "FAIL: Dockerfile not found"
+            exit 1
+          fi
+          
+          # Check for appropriate base image
+          if grep -q "python" Dockerfile; then
+            echo "Testing Python Dockerfile..."
+            if ! grep -q "FROM.*python" Dockerfile; then
+              echo "FAIL: Python base image not found in Dockerfile"
+              exit 1
+            fi
+            if ! grep -q "pip install\|requirements.txt" Dockerfile; then
+              echo "FAIL: Python dependency installation not found in Dockerfile"
+              exit 1
+            fi
+            echo "PASS: Python Dockerfile is valid"
+            
+          elif grep -q "golang\|go:" Dockerfile; then
+            echo "Testing Go Dockerfile..."
+            if ! grep -q "FROM.*go\|FROM.*golang" Dockerfile; then
+              echo "FAIL: Go base image not found in Dockerfile"
+              exit 1
+            fi
+            if ! grep -q "go build\|go mod\|go run" Dockerfile; then
+              echo "FAIL: Go build commands not found in Dockerfile"
+              exit 1
+            fi
+            echo "PASS: Go Dockerfile is valid"
+            
+          else
+            echo "FAIL: Dockerfile doesn't appear to be for Python or Go"
+            exit 1
+          fi
+        expected-output: "PASS:"
+        comparison-method: contains
+        timeout: 10
+
+    # Test 7: Docker Compose Build Test
+    - name: Docker Compose Build Test
+      id: compose-build-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Docker Compose Build Test
+        command: |
+          # Check if docker-compose configuration is valid
+          if ! docker-compose config > /dev/null 2>&1; then
+            echo "FAIL: docker-compose.yml has invalid configuration"
+            exit 1
+          fi
+          
+          # Check for proper port mapping
+          if ! grep -q "ports:" docker-compose.yml; then
+            echo "FAIL: No port mapping found in docker-compose.yml"
+            exit 1
+          fi
+          
+          # Check for proper service dependencies
+          if ! grep -q "depends_on:" docker-compose.yml; then
+            echo "FAIL: No service dependencies found in docker-compose.yml"
+            exit 1
+          fi
+          
+          echo "PASS: Docker configuration is valid"
+        expected-output: "PASS: Docker configuration is valid"
+        comparison-method: contains
+        timeout: 30
+
+    # Test 8: Multi-language Support Validation
+    - name: Multi-language Support Test
+      id: multi-language-test
+      uses: classroom-resources/autograding-io-grader@v1
+      with:
+        test-name: Multi-language Support Test
+        command: |
+          python_files=$(find . -name "*.py" | wc -l)
+          go_files=$(find . -name "*.go" | wc -l)
+          
+          if [ "$python_files" -gt 0 ] && [ "$go_files" -gt 0 ]; then
+            echo "FAIL: Mixed Python and Go files found. Please use only one language."
+            exit 1
+          elif [ "$python_files" -gt 0 ]; then
+            echo "PASS: Python implementation detected and validated"
+          elif [ "$go_files" -gt 0 ]; then
+            echo "PASS: Go implementation detected and validated"
+          else
+            echo "FAIL: No valid implementation files found"
+            exit 1
+          fi
+        expected-output: "PASS:"
+        comparison-method: contains
+        timeout: 10
+
+    - name: Autograding Reporter
+      uses: classroom-resources/autograding-grading-reporter@v1
+      env:
+        LANGUAGE-DETECTION-TEST_RESULTS: "${{ steps.language-detection-test.outputs.result }}"
+        COMPOSE-CONFIG-TEST_RESULTS: "${{ steps.compose-config-test.outputs.result }}"
+        DEPENDENCIES-TEST_RESULTS: "${{ steps.dependencies-test.outputs.result }}"
+        APP-STRUCTURE-TEST_RESULTS: "${{ steps.app-structure-test.outputs.result }}"
+        ERROR-HANDLING-TEST_RESULTS: "${{ steps.error-handling-test.outputs.result }}"
+        POSTGRES-INTEGRATION-TEST_RESULTS: "${{ steps.postgres-integration-test.outputs.result }}"
+        DOCKERFILE-TEST_RESULTS: "${{ steps.dockerfile-test.outputs.result }}"
+        COMPOSE-BUILD-TEST_RESULTS: "${{ steps.compose-build-test.outputs.result }}"
+        MULTI-LANGUAGE-TEST_RESULTS: "${{ steps.multi-language-test.outputs.result }}"
+      with:
+        runners: language-detection-test,compose-config-test,dependencies-test,app-structure-test,error-handling-test,postgres-integration-test,dockerfile-test,compose-build-test,multi-language-test
